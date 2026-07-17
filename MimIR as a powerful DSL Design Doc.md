@@ -136,6 +136,39 @@ normalizes a negative dimension by adding the rank. The MimIR operator then uses
 `Idx r`, which makes the normalized range constraint intrinsic to the type of the
 dimension argument.
 
+The rank remains a canonical parameter: an inequality such as `r >= 2` should not
+be encoded as `batch_rank + 2`, because the current normalizer cannot automatically
+prove those arithmetic forms definitionally equivalent.
+
+Instead, the operator keeps its canonical `r` and `n` parameters and expresses the
+inequality as a checked continuation:
+
+```mimir
+lam %runtime.require {T: *, n: Nat}
+                     (condition: Bool, message: «n; I8»)
+                     (body: [] → T): T =
+    if condition then body() else %runtime.fail @(T, n) message;
+
+%runtime.require (%core.ncmp.ge (r, 2), "triu requires rank >= 2") checked;
+```
+
+The thunk is essential under strict evaluation: the implementation is constructed
+only after the condition has been checked. A closed condition is reduced by partial
+evaluation (`true` removes the guard and `false` becomes a static failure); a dynamic
+condition remains an explicit control-flow check. This gives a practical first
+version of refinement-like preconditions without adding a `requires` keyword.
+
+For statement-style checks, MimIR exposes a separate effectful operation:
+
+```mimir
+%runtime.assert:
+    [%mem.M a, Bool, «n; I8»] → %mem.M a
+```
+
+The explicit `%mem.M` token sequences the assertion with subsequent effects. It
+does not represent a memory mutation; it is an ordering dependency. Pure tensor
+operators use `require`, while bufferized or effectful code can use `assert`.
+
 ##### Comparator Semantics
 
 StableHLO `compare` selects its comparison type from the element type:
@@ -180,24 +213,68 @@ integers to signed comparison, and floating-point types to floating comparison.
 
 ##### What Is Captured Today
 
-The current implementation captures the following `sort` semantics:
+It is useful to separate StableHLO's constraints from the parts of the semantics
+that are already represented by MimIR:
 
-- non-empty input count is checked during lowering;
-- input and output shapes are the same by construction;
-- all variadic operands are sorted in lockstep;
-- the comparator argument order is exactly
-  `lhs0, rhs0, lhs1, rhs1, ...`;
-- negative dimensions are expected to be normalized by the importer;
-- `Idx r` prevents an out-of-range normalized dimension;
-- `is_stable = true` is implemented with a stable algorithm;
-- `is_stable = false` may also return a stable result, which is permitted;
-- signed integer and boolean unsigned comparison can be represented through
-  explicit comparison witnesses.
+**Captured by the type and implementation**
 
-The comparator's strict-weak-ordering contract is treated as a precondition. It is
-not checked dynamically: validating transitivity for arbitrary values would require
-an expensive, potentially unbounded set of calls and would change the cost model of
-the operator.
+- **C2, input/output types:** `Ts` is shared by the input and result packs, so
+  `type(inputs...) = type(results...)` is enforced by construction.
+- **C3, shapes:** every input and result uses the same shape `s`.
+- **C5, comparator signature:** the comparator has exactly `2 * n` arguments with
+  the interleaved order `lhs0, rhs0, lhs1, rhs1, ...`, and each argument type is
+  selected from `Ts`.
+- **Lockstep sorting:** all variadic inputs are carried through the same swap, so
+  keys and payloads remain synchronized.
+- **Sorting direction:** adjacent elements are exchanged when
+  `comparator(rhs, lhs)` is true, which implements non-descending order for the
+  StableHLO comparator convention.
+- **Stability:** the implementation is stable. This is valid for both values of
+  `is_stable`, because StableHLO only requires stability when it is true.
+
+**Captured by checks or importer conventions**
+
+- **C1, non-empty inputs:** `%runtime.require (n >= 1, ...)` is used. A literal
+  failure is a compile-time error; a dynamic condition remains a runtime check.
+- **C4, dimension:** the importer normalizes a negative dimension to a non-negative
+  value. The MimIR operator then uses `dimension : Idx r`, which captures the
+  normalized range `0 <= dimension < r`. The original signed range check
+  `-r <= dimension < r` remains an importer responsibility.
+- **Comparator ordering:** strict-weak-ordering is treated as a precondition. It is
+  not checked dynamically because validating it would require an unbounded number
+  of comparator calls.
+
+`%runtime.assert` is the statement-style form for effectful code:
+
+```mim
+%runtime.assert:
+    [%mem.M a, Bool, «n; I8»] → %mem.M a
+```
+
+Pure tensor expressions use continuation-based `%runtime.require`. Its failure is
+backend-neutral: the host LLVM backend may materialize the message and call
+`puts`/`abort`, while an NVPTX backend can lower the same failure to `llvm.trap` or a
+device assertion ABI.
+
+**Unsupported or TODO**
+
+- **Input element-type domain:** `Ts` is currently polymorphic over `*`; the
+  implementation does not yet reject element types that StableHLO `sort` does not
+  support, nor does it model per-tensor quantized tensors.
+- **Comparator typeclass resolution:** an explicit comparison witness can express
+  `SIGNED`, `UNSIGNED`, `FLOAT`, and `TOTALORDER`, but users can still construct an
+  inconsistent witness. A canonical typeclass resolver must reject such combinations
+  and select the policy from the element type.
+- **Complete `stablehlo.compare` semantics:** IEEE floating-point NaN behavior,
+  `TOTALORDER`, complex lexicographic comparison, and quantized comparison require
+  additional primitives and resolver support.
+- **Constant attributes:** StableHLO requires `dimension` and `is_stable` to be
+  constants. The current signature permits a general `Bool` for `is_stable`; this
+  should be tightened when constant-attribute witnesses are introduced.
+- **Runtime executable diagnostics:** the IR preserves dynamic failure messages and
+  lowers host failure through the LLVM hook, but the direct-style LLVM emitter still
+  needs to handle a non-returning failure appearing in a value-returning expression
+  before end-to-end message/abort execution is complete.
 
 ##### Remaining Extensions
 
@@ -214,6 +291,26 @@ partial evaluation would erase the witness and leave only the selected primitive
 comparison. `TOTALORDER`, complex lexicographic comparison, and quantized
 dequantize-compare require additional primitives before they can be represented
 without weakening StableHLO semantics.
+
+##### Constraints at Type Level
+
+Not every operator constraint belongs in the type-level signature. A useful division
+observed in the `triu`/`tril` and `sort` implementations is:
+
+- dependent types express equalities and shape relationships that are part of the
+  representation, such as input/output shape preservation, variadic element types,
+  comparator arity, and `dimension : Idx r`;
+- type-indexed witnesses express semantic choices such as StableHLO's
+  `compare_type` mapping;
+- ordinary predicates express inequalities and other checks whose truth may depend
+  on dynamic metadata, such as `rank >= 2` and non-empty variadic input lists;
+- partial evaluation removes predicates proved from literals, while dynamic
+  predicates lower to target-specific control flow and a non-returning failure.
+
+This avoids imposing arithmetic theorem proving on the normalizer. A future
+refinement-type or proof-argument extension could move selected predicates into the
+interface, but it should be introduced only when call-site proof obligations provide
+clear value beyond the current checked-continuation encoding.
 
 #### dynamic shapes
 
@@ -357,4 +454,3 @@ dev phases:
 LLMs are great at rewrite as long as it has a powerful **Oracle** that not only would tell if the result is correct but also what the problems are(like type check error message). the rewrite into rust of great project like **[react](https://github.com/react/react/pull/36173)**/[bun](https://github.com/oven-sh/bun/pull/30412) had proved the feasibility and potential.
 
 Can we drive the agents to **rewrite** imperative transforms of MLIR/Tilelang/TVM into the **descriptive** transforms in MimIR in a descriptive way with efficiency?
-
