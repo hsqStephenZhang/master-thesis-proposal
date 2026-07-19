@@ -261,10 +261,11 @@ device assertion ABI.
 - **Input element-type domain:** `Ts` is currently polymorphic over `*`; the
   implementation does not yet reject element types that StableHLO `sort` does not
   support, nor does it model per-tensor quantized tensors.
-- **Comparator typeclass resolution:** an explicit comparison witness can express
+- **Canonical comparator witnesses:** an explicit comparison witness can express
   `SIGNED`, `UNSIGNED`, `FLOAT`, and `TOTALORDER`, but users can still construct an
-  inconsistent witness. A canonical typeclass resolver must reject such combinations
-  and select the policy from the element type.
+  inconsistent witness. The importer or a sealed plugin-level resolver should select
+  a canonical witness from the element type. General-purpose typeclass resolution is
+  not required for this finite dtype mapping.
 - **Complete `stablehlo.compare` semantics:** IEEE floating-point NaN behavior,
   `TOTALORDER`, complex lexicographic comparison, and quantized comparison require
   additional primitives and resolver support.
@@ -284,7 +285,8 @@ signed comparator. A stronger type system could prevent this in two steps:
 
 1. distinguish signed and unsigned integer types, rather than representing both only
    as an `Idx` carrier;
-2. add **compile-time instance resolution** for canonical `StableHloCompare` witnesses.
+2. provide canonical `StableHloCompare` witnesses through the importer or a sealed
+   plugin-level resolver.
 
 That resolver would reject unsupported combinations during elaboration, while
 partial evaluation would erase the witness and leave only the selected primitive
@@ -331,53 +333,84 @@ to have a fully useful `template + partial evaluation(inline)` compiler frontend
 
 see [lower_via_impl](https://github.com/mimir/mimir/blob/68182ea69b5ddc1221b1b4c3503938e37f567c87/src/mim/plug/tensor/phase/lower.cpp#L15) in current tensor plugin. we could lift it to a more widely used tool!
 
-### Simple Interface System Implementation(proposal)
+### Explicit Dictionaries and Optional Instance Elaboration
 
-MimIR already supports parametric polymorphism, but it does not currently provide typeclass-style dispatch. Tensor operators therefore encode operations such as add and mul in explicit dictionaries, which requires manual instantiation at every call site and does not scale well.
-
-A lightweight solution is to add **compile-time interfaces with type-indexed instances**:
-
-```mimir
-interface Ring<T> {
-    zero: T;
-    add: (T, T) -> T;
-    mul: (T, T) -> T;
-}
-
-instance Ring<i32> = {
-    zero = 0;
-    add = %core.add.i32;
-    mul = %core.mul.i32;
-};
-```
-
-A polymorphic operator can request an interface implicitly:
-
-`lam dot [T: *] (R: Ring<T>) (...) : T = ...`
-
-At elaboration time, MimIR resolves `Ring<T>` using the concrete type:
+MimIR does not require a typeclass extension to express dtype-polymorphic tensor
+operators. An interface is already representable as a dependent dictionary, and the
+dictionary is an ordinary higher-order argument:
 
 ```mimir
-Ring<i32> -> instance Ring<i32>
-Ring<f32> -> instance Ring<f32>
+let %tensor.Numeric = [
+    T: *,
+    zero: T,
+    add: [T, T] -> T,
+    mul: [T, T] -> T,
+];
+
+lam tensor_add [N: %tensor.Numeric]
+               {r: Nat, s: «r; Nat»}
+               (lhs rhs: «s; N#T»): «s; N#T» =
+    %tensor.binary N#add (lhs, rhs);
 ```
 
-The resolved dictionary is then passed explicitly in the elaborated IR and can be erased or specialized during partial evaluation.
-
-The same mechanism can express StableHLO comparison semantics:
+Concrete dictionaries for the finite set of tensor dtypes are ordinary MimIR values:
 
 ```mimir
-interface StableHloCompare<T> {
-    compare_type: CompareType;
-    compare: (T, T) -> Bool;
-}
+lam i32_add (lhs rhs: I32): I32 = %core.wrap.add 0 (lhs, rhs);
+lam i32_mul (lhs rhs: I32): I32 = %core.wrap.mul 0 (lhs, rhs);
 
-instance StableHloCompare<i32> = SIGNED;
-instance StableHloCompare<u64> = UNSIGNED;
-instance StableHloCompare<Bool> = UNSIGNED;
-instance StableHloCompare<f32> = FLOAT;
-instance StableHloCompare<f64> = FLOAT;
+let i32_numeric: %tensor.Numeric =
+    (I32, 0:I32, i32_add, i32_mul);
+
+let f32_numeric: %tensor.Numeric =
+    (%math.F32, 0:%math.F32,
+     %math.arith.add @f32 0, %math.arith.mul @f32 0);
 ```
+
+At a call such as `tensor_add f32_numeric (lhs, rhs)`, beta reduction and tuple
+projection replace `N#add` with the concrete floating-point primitive. Since dtype
+metadata is static in a compiled tensor graph, inline and partial evaluation erase
+the dictionary and leave no runtime dispatch. The same construction applies to
+`i64`, `f16`, `f32`, and other flat tensor element types. Existing `%math` operations
+are already parameterized by floating-point format, while integer operations are
+parameterized by bit width.
+
+Dependent types and dictionaries have separate roles. A dependent signature ensures
+that the operands, result, and selected operations agree on `N#T`; the dictionary
+carries the operations themselves. A polymorphic lambda receiving only an abstract
+`T: *` cannot inspect whether `T` is `I32` or `F32`, so it cannot synthesize the
+dictionary by ordinary value-level control flow. Either the caller must pass an
+explicit dictionary, or an elaborator must insert one.
+
+For the PyTorch frontend, explicit insertion is sufficient: the importer already
+knows every node's `torch.dtype` and can map it to a canonical MimIR dictionary:
+
+```text
+torch.int32   -> i32_numeric
+torch.int64   -> i64_numeric
+torch.float16 -> f16_numeric
+torch.float32 -> f32_numeric
+```
+
+StableHLO comparison can use the same approach. The importer or tensor plugin selects
+a sealed `StableHloCompare` witness from the element dtype; its dependent type keeps
+the comparator consistent with the operands, and partial evaluation erases the
+witness. This avoids requiring a general-purpose instance solver merely to dispatch
+over a small, closed dtype set.
+
+A future elaborator may optionally synthesize canonical dictionaries from concrete
+element types, allowing source code to omit them. Such instance resolution improves
+ergonomics, coherence checks, and diagnostics, but it elaborates to the same explicit
+dictionary-passing IR and does not increase the expressive power of the MimIR core.
+It should therefore be treated as optional syntax/elaboration support rather than a
+prerequisite for the tensor or PyTorch plugins.
+
+One dictionary should also not be assumed to capture all dtype semantics. Signed
+comparison, floating-point transcendental functions, mixed-dtype promotion, and
+low-precision accumulation require different witnesses or relations, for example
+`Ordered<T>`, `FloatMath<T>`, `Cast<From, To>`, and
+`Reduction<Input, Accumulator, Output>`. In particular, PyTorch dtype promotion is a
+multi-type relation and cannot be represented by a single `Ring<T>` instance.
 
 ### Onnx/Torch dialect  - Frontend for high-level operators
 
