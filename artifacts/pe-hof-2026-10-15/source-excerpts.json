@@ -1,0 +1,83 @@
+[
+  {
+    "path": "torch.mim",
+    "start_line": 999,
+    "end_line": 1006,
+    "sha256": "eee37159c47580ff6ac6c343f5df4da8e0ecb1507258d289c10aca383bcc64ef",
+    "text": "anx lam add (A: Arithmetic)\n                       {r: Nat, s: «r; Nat»}\n                       (lhs: «s; A#R#T», rhs: «s; A#R#T»,\n                        alpha: A#R#T): «s; A#R#T» =\n    let scaled_rhs = tensor.unary @(A#R#T, A#R#T)\n        (torch_scale_scalar A alpha) @(r, s) rhs;\n    tensor.binary @(A#R#T, A#R#T, A#R#T)\n        A#R#add @(r, s) (lhs, scaled_rhs);",
+    "repository": "https://github.com/hsqStephenZhang/mimir-torch-plugin",
+    "version": "6c41f8eb2313cbb923c2cb92a0a5a6b4d4f9a23d"
+  },
+  {
+    "path": "torch.mim",
+    "start_line": 893,
+    "end_line": 896,
+    "sha256": "3d0c0ecfd2807c3287cbb6e937bfee655321a7a2a0188282d53ee9e121f57ed8",
+    "text": "axm add: [A: Arithmetic]\n                  → {r: Nat, s: «r; Nat»}\n                  → [lhs: «s; A#R#T», rhs: «s; A#R#T», alpha: A#R#T]\n                  → «s; A#R#T»;",
+    "repository": "https://github.com/hsqStephenZhang/mimir-torch-plugin",
+    "version": "6c41f8eb2313cbb923c2cb92a0a5a6b4d4f9a23d"
+  },
+  {
+    "path": "torch.mim",
+    "start_line": 4971,
+    "end_line": 4975,
+    "sha256": "f9526b69de1c2d0d105568a775711da3589325d816cb4fd2029fba9845eb38d5",
+    "text": "lam torch_mish_scalar (F: Floating)\n                      (x: F#A#R#T): F#A#R#T =\n    let softplus = torch_softplus_scalar F\n        (F#from_nat 1, F#from_nat 20) x;\n    F#A#R#mul (x, torch_tanh_scalar F softplus);",
+    "repository": "https://github.com/hsqStephenZhang/mimir-torch-plugin",
+    "version": "6c41f8eb2313cbb923c2cb92a0a5a6b4d4f9a23d"
+  },
+  {
+    "path": "torch.mim",
+    "start_line": 5081,
+    "end_line": 5085,
+    "sha256": "a232a4ea1e9b9878d79af6e1e6bb08b42979b5675c7746a6a6156d581970e075",
+    "text": "anx lam mish (F: Floating)\n    {r: Nat, s: «r; Nat»}\n    (input: «s; F#A#R#T»): «s; F#A#R#T» =\n    tensor.unary @(F#A#R#T, F#A#R#T)\n        (torch_mish_scalar F) @(r, s) input;",
+    "repository": "https://github.com/hsqStephenZhang/mimir-torch-plugin",
+    "version": "6c41f8eb2313cbb923c2cb92a0a5a6b4d4f9a23d"
+  },
+  {
+    "path": "torch.mim",
+    "start_line": 5207,
+    "end_line": 5221,
+    "sha256": "660eac772675caf0a282997e2518490c28aaa96a4bfd194ff9ce7c3e4b0ec144",
+    "text": "anx lam mean_dim (F: Floating)\n                            {r: Nat, s: «r; Nat»}\n                            (dimension: I64)\n                            (input: «s; F#A#R#T»)\n                          : «torch_reduce_shape (s, torch_canonical_dim @r dimension); F#A#R#T» =\n    runtime.require (torch_dim_in_range @r dimension, \"mean.dim expects an in-range dim\") body\n    where\n        lam body(): «torch_reduce_shape (s, torch_canonical_dim @r dimension); F#A#R#T» =\n            let dim = torch_canonical_dim @r dimension;\n            let reduced = torch_reduce_dim (F#A#R#add, F#A#R#_0) (s, dim) input;\n            let count = F#from_nat (s#dim);\n            tensor.unary @(F#A#R#T, F#A#R#T)\n                (torch_div_scalar F#A count)\n                @(r - 1, torch_reduce_shape (s, dim)) reduced;\n    end;",
+    "repository": "https://github.com/hsqStephenZhang/mimir-torch-plugin",
+    "version": "6c41f8eb2313cbb923c2cb92a0a5a6b4d4f9a23d"
+  },
+  {
+    "path": "torch.mim",
+    "start_line": 6637,
+    "end_line": 6651,
+    "sha256": "8730d60db5ba3ded5083be9b70256f6681579aa989efa83aa960e5a9cd98b812",
+    "text": "anx lam cross_entropy_mean_2d (F: Floating)\n    {n c: Nat}\n    (input: «n, c; F#A#R#T», target: «n; I64»): F#A#R#T =\n    let log_probs = normalization.log_softmax F\n        @(2, (n, c)) (1I64, ff) input;\n    let target_2d = tensor.reshape @(I64, 1, 2)\n        (n,) (n, 1) target;\n    let selected_2d = indexing.gather\n        @(F#A#R#T, 2, (n, c), (n, 1))\n        1I64 (log_probs, target_2d);\n    let selected = tensor.reshape @(F#A#R#T, 2, 1)\n        (n, 1) (n,) selected_2d;\n    let losses = tensor.unary @(F#A#R#T, F#A#R#T)\n        (torch_neg_scalar F#A) @(1, (n,)) selected;\n    reduction.mean_all F @(1, (n,)) losses;",
+    "repository": "https://github.com/hsqStephenZhang/mimir-torch-plugin",
+    "version": "6c41f8eb2313cbb923c2cb92a0a5a6b4d4f9a23d"
+  },
+  {
+    "path": "src/mim/plug/tensor/tensor.mim",
+    "start_line": 2276,
+    "end_line": 2288,
+    "sha256": "c3803d3059cf9889e97ecdb78418c3df0db3969ffb19a2284b6ab16d2452f98f",
+    "text": "priv anx lam trans_im2col_impl (R: Ring) {n cin cout h w kh kw: Nat}\n                             (stride dilation padding: «2; Nat»)\n                             (input: «n, cin, h, w; R#T», weight: «cout, cin, kh, kw; R#T»)\n                           : «conv_shape (n, cout, (h, w), (kh, kw), stride, dilation, padding); R#T» =\n    let (_, _, oh, ow) = conv_shape (n, cout, (h, w), (kh, kw), stride, dilation, padding);\n    let k = cin * kh * kw;\n    let p = oh * ow;\n    let cols = im2col @(R#T) @(n, cin, h, w) ((kh, kw), stride, dilation, padding) (input, R#_0);\n    let cols = compute_at 0 (reshape (k, n, p) (k, n * p) (transpose @(R#T, 3) (1_3, 0_3, 2_3) @(n, k, p) cols));\n    let w2 = reshape (cout, cin, kh, kw) (cout, k) weight;\n    let prod = product_2d R @(cout, k, n * p) (w2, cols);\n    reshape (n, cout, p) (n, cout, oh, ow)\n        (transpose @(R#T, 3) (1_3, 0_3, 2_3) @(cout, n, p) (reshape (cout, n * p) (cout, n, p) prod));",
+    "repository": "https://github.com/hsqStephenZhang/MimIR",
+    "version": "09bfc92ae80bef5a2acdbcb449bbd909a84afdbf + conv-winograd.patch"
+  },
+  {
+    "path": "src/mim/plug/tensor/tensor.mim",
+    "start_line": 2294,
+    "end_line": 2397,
+    "sha256": "5b57ac58d2e94fedc51e9660ed9f19fe1a27c55641d96055f0f38b9a119d9866",
+    "text": "lam winograd_weight (m: Nat) {pe: «2; Nat»} (a b c: math.F pe): «4; math.F pe» =\n    let add = math.arith.add m @pe;\n    let sub = math.arith.sub m @pe;\n    lam half (x: math.F pe): math.F pe = math.arith.mul m @pe (math.conv.f2f pe (0.5:math.F64), x);\n    (a, half (add (add (a, b), c)), half (add (sub (a, b), c)), c);\n\nlam winograd_input (m: Nat) {pe: «2; Nat»} (a b c d: math.F pe): «4; math.F pe» =\n    let add = math.arith.add m @pe;\n    let sub = math.arith.sub m @pe;\n    (sub (a, c), add (b, c), sub (c, b), sub (b, d));\n\nlam winograd_output (m: Nat) {pe: «2; Nat»} (a b c d: math.F pe): «2; math.F pe» =\n    let add = math.arith.add m @pe;\n    let sub = math.arith.sub m @pe;\n    (add (add (a, b), c), sub (sub (b, c), d));\n///\n/// ### trans_winograd_impl\n///\n/// U=GgGᵀ and V=BᵀdB are staged before the sixteen channel contractions, M=UV.\n/// All batch/spatial tiles share a GEMM column axis; AᵀMA restores the valid NCHW output points.\n\npriv anx lam trans_winograd_impl (m: Nat) {pe: «2; Nat»} {n cin cout h w kh kw: Nat}\n                               (stride dilation padding: «2; Nat»)\n                               (input: «n, cin, h, w; math.F pe», weight: «cout, cin, kh, kw; math.F pe»)\n                             : «conv_shape (n, cout, (h, w), (kh, kw), stride, dilation, padding); math.F pe» =\n    let F = math.F pe;\n    let (_, _, oh, ow) = conv_shape (n, cout, (h, w), (kh, kw), stride, dilation, padding);\n    let th = (oh + 1) / 2;\n    let tw = (ow + 1) / 2;\n    let tiles = n * th * tw;\n    let lo = (0, 0, padding#0_2, padding#1_2);\n    let hi = (0, 0, padding#0_2 + oh % 2, padding#1_2 + ow % 2);\n    let ph = h + padding#0_2 + hi#2_4;\n    let pw = w + padding#1_2 + hi#3_4;\n    let padded = pad @(F, 4) (n, cin, h, w) (0, lo, hi) (input, 0:F);\n\n    let coord4 = (0:I8, 1:I8, 2:I8, 3:I8);\n    let coord2 = (0:I8, 1:I8);\n    let T9 = (F, F, F, F, F, F, F, F, F, I8, I8);\n    let T16 = (F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, I8, I8);\n\n    fun weight_point (_: F, (x0 x1 x2 x3 x4 x5 x6 x7 x8: F, i j: I8))@tt: F =\n        let ii = core.conv.u 4 i;\n        let jj = core.conv.u 4 j;\n        let r0 = (winograd_weight m @pe (x0, x1, x2))#jj;\n        let r1 = (winograd_weight m @pe (x3, x4, x5))#jj;\n        let r2 = (winograd_weight m @pe (x6, x7, x8))#jj;\n        return ((winograd_weight m @pe (r0, r1, r2))#ii);\n    let us = (4, 4, cout, cin);\n    let umaps = ‹a: 9; lm (o: «4; affine.Index»): «4; affine.Index» =\n        (o#2_4, o#3_4, affine.lit (core.bitcast Nat a / 3), affine.lit (core.bitcast Nat a % 3))›;\n    let u = map_reduce @11 @(F, 4, 4) (us, us)\n        @(T9, vec.cat @(9, 2) @Nat (‹9; 4›, (1, 1)),\n          tuple.cat @(9, 2) @(‹9; «4; Nat»›, ‹2; Nat›) (‹9; (cout, cin, kh, kw)›, (4, 4)))\n        (weight_point, ⊥: F) affine.id\n        (tuple.cat @(9, 2) @(‹9; «4; affine.Index» → «4; affine.Index»›, ‹2; «4; affine.Index» → affine.Index›) (umaps, (proj_map @(4, 1) 0, proj_map @(4, 1) 1)))\n        (tuple.cat @(9, 2) @(‹9; «cout, cin, kh, kw; F»›, ‹2; «4; I8»›) (‹9; weight›, (coord4, coord4)));\n    let u = compute_at 0 (reshape us (16, cout, cin) u);\n\n    fun input_point (_: F, (x0 x1 x2 x3 x4 x5 x6 x7 x8 x9 x10 x11 x12 x13 x14 x15: F, i j: I8))@tt: F =\n        let ii = core.conv.u 4 i;\n        let jj = core.conv.u 4 j;\n        let r0 = (winograd_input m @pe (x0, x1, x2, x3))#jj;\n        let r1 = (winograd_input m @pe (x4, x5, x6, x7))#jj;\n        let r2 = (winograd_input m @pe (x8, x9, x10, x11))#jj;\n        let r3 = (winograd_input m @pe (x12, x13, x14, x15))#jj;\n        return ((winograd_input m @pe (r0, r1, r2, r3))#ii);\n    let vs = (4, 4, cin, n, th, tw);\n    let vmaps = ‹a: 16; lm (o: «6; affine.Index»): «4; affine.Index» =\n        (o#3_6, o#2_6,\n         affine.op.add (affine.semiop.mul (o#4_6, 2), affine.lit (core.bitcast Nat a / 4)),\n         affine.op.add (affine.semiop.mul (o#5_6, 2), affine.lit (core.bitcast Nat a % 4)))›;\n    let v = map_reduce @18 @(F, 6, 6) (vs, vs)\n        @(T16, vec.cat @(16, 2) @Nat (‹16; 4›, (1, 1)),\n          tuple.cat @(16, 2) @(‹16; «4; Nat»›, ‹2; Nat›) (‹16; (n, cin, ph, pw)›, (4, 4)))\n        (input_point, ⊥: F) affine.id\n        (tuple.cat @(16, 2) @(‹16; «6; affine.Index» → «4; affine.Index»›, ‹2; «6; affine.Index» → affine.Index›) (vmaps, (proj_map @(6, 1) 0, proj_map @(6, 1) 1)))\n        (tuple.cat @(16, 2) @(‹16; «n, cin, ph, pw; F»›, ‹2; «4; I8»›) (‹16; padded›, (coord4, coord4)));\n    let v = compute_at 0 (reshape vs (16, cin, tiles) v);\n    let R: Ring = (F, 0:F, math.arith.add m @pe, math.arith.mul m @pe);\n    let prod = bmm R @(16, cout, cin, tiles) (u, v);\n\n    fun output_point (_: F, (x0 x1 x2 x3 x4 x5 x6 x7 x8 x9 x10 x11 x12 x13 x14 x15: F, i j: I8))@tt: F =\n        let ii = core.conv.u 2 i;\n        let jj = core.conv.u 2 j;\n        let r0 = (winograd_output m @pe (x0, x1, x2, x3))#jj;\n        let r1 = (winograd_output m @pe (x4, x5, x6, x7))#jj;\n        let r2 = (winograd_output m @pe (x8, x9, x10, x11))#jj;\n        let r3 = (winograd_output m @pe (x12, x13, x14, x15))#jj;\n        return ((winograd_output m @pe (r0, r1, r2, r3))#ii);\n    let ys = (n, cout, oh, ow);\n    let ymaps = ‹a: 16; lm (o: «4; affine.Index»): «3; affine.Index» =\n        (affine.lit (core.bitcast Nat a), o#1_4,\n         affine.op.add (affine.semiop.mul (o#0_4, th * tw),\n             affine.op.add (affine.semiop.mul (affine.semiop.floordiv (o#2_4, 2), tw),\n                            affine.semiop.floordiv (o#3_4, 2))))›;\n    lam row_index (o: «4; affine.Index»): affine.Index = affine.semiop.rem (o#2_4, 2);\n    lam col_index (o: «4; affine.Index»): affine.Index = affine.semiop.rem (o#3_4, 2);\n    map_reduce @18 @(F, 4, 4) (ys, ys)\n        @(T16, vec.cat @(16, 2) @Nat (‹16; 3›, (1, 1)),\n          tuple.cat @(16, 2) @(‹16; «3; Nat»›, ‹2; Nat›) (‹16; (16, cout, tiles)›, (2, 2)))\n        (output_point, ⊥: F) affine.id\n        (tuple.cat @(16, 2) @(‹16; «4; affine.Index» → «3; affine.Index»›, ‹2; «4; affine.Index» → affine.Index›) (ymaps, (row_index, col_index)))\n        (tuple.cat @(16, 2) @(‹16; «16, cout, tiles; F»›, ‹2; «2; I8»›) (‹16; prod›, (coord2, coord2)));",
+    "repository": "https://github.com/hsqStephenZhang/MimIR",
+    "version": "09bfc92ae80bef5a2acdbcb449bbd909a84afdbf + conv-winograd.patch"
+  },
+  {
+    "path": "src/mim/plug/tensor/tensor.mim",
+    "start_line": 2294,
+    "end_line": 2298,
+    "sha256": "09fcdc87672c1b7a53cd07aa664e3d5586fbdd33693a8aa9ab09e89990c3f0c8",
+    "text": "lam winograd_weight (m: Nat) {pe: «2; Nat»} (a b c: math.F pe): «4; math.F pe» =\n    let add = math.arith.add m @pe;\n    let sub = math.arith.sub m @pe;\n    lam half (x: math.F pe): math.F pe = math.arith.mul m @pe (math.conv.f2f pe (0.5:math.F64), x);\n    (a, half (add (add (a, b), c)), half (add (sub (a, b), c)), c);",
+    "repository": "https://github.com/hsqStephenZhang/MimIR",
+    "version": "09bfc92ae80bef5a2acdbcb449bbd909a84afdbf + conv-winograd.patch"
+  }
+]
