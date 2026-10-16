@@ -1,0 +1,5 @@
+# Keep proposal sources in Git; retain other materials locally.
+*
+!*/
+!*.md
+!.gitignore
