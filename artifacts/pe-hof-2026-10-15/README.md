@@ -47,7 +47,7 @@ python3 docs/benchmarks/conv-winograd/summarize.py
 - 检查时 Torch 插件：https://github.com/hsqStephenZhang/mimir-torch-plugin ，`6c41f8eb2313cbb923c2cb92a0a5a6b4d4f9a23d`
 - 现有 `frontend/level1.json` 和 `level2.json`：100 PASS；99 PASS/1 FAIL/0 INVALID。日志逐字归档。
 
-结果 JSON 没有嵌入完整命令、环境变量或依赖 lock；事后检查的源码和 build hash 不能代替运行时记录。`frontend/manifest.json` 明确将运行条件留空。前端请求 `torch.scan.diff`/`diff_i64`，所列插件源版本没有该接口；作者报告六个前端测试因此失败。这些版本是当前检查对象，尚未构成完整兼容的前端测试复现配方。卷积补丁与这个前端子模块是独立实验材料。
+结果 JSON 没有嵌入完整命令、环境变量或依赖 lock；`frontend/manifest.json` 的 `run_arguments` 与 `run_dependency_lock` 由运行者事后补记，事后检查的 build hash 仍不能代替运行时记录。前端请求 `torch.scan.diff`/`diff_i64`，所列插件源版本没有该接口；作者报告六个前端测试因此失败。这些版本是当前检查对象，尚未构成完整兼容的前端测试复现配方。卷积补丁与这个前端子模块是独立实验材料。
 
 ## 文件校验
 
